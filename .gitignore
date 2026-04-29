@@ -33,6 +33,9 @@ yarn-error.*
 .env
 .env*.local
 
+# local tooling (e.g. rembg for asset nukki)
+.venv-nukki/
+
 # typescript
 *.tsbuildinfo
 

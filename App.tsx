@@ -1,7 +1,13 @@
-import { Audio } from 'expo-av';
+import {
+    RecordingPresets,
+    requestRecordingPermissionsAsync,
+    setAudioModeAsync,
+    useAudioRecorder,
+    useAudioRecorderState,
+} from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -26,7 +32,7 @@ import { appendHistory, clearHistory, loadHistory } from './src/storage/history'
 import type { HistoryEntry, TranslationDirection } from './src/types/translation';
 import { WAVEFORM_BAR_COUNT, createInitialWaveformLevels, meteringToLevel } from './src/utils/audioMetering';
 import { logUserFacingError } from './src/utils/reportError';
-import { speakOriginal, speakTranslation, stopSpeaking } from './src/utils/tts';
+import { speakTranslation, stopSpeaking } from './src/utils/tts';
 
 const generateId = (): string => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
 
@@ -51,8 +57,17 @@ export default function App() {
     const [recording, setRecording] = useState(false);
     const [waveformLevels, setWaveformLevels] = useState<number[]>(() => createInitialWaveformLevels());
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
-    const recordingRef = useRef<Audio.Recording | null>(null);
+    const recordingStartInFlightRef = useRef(false);
     const { height: windowHeight } = useWindowDimensions();
+    const recordingOptions = useMemo(
+        () => ({
+            ...RecordingPresets.HIGH_QUALITY,
+            isMeteringEnabled: true,
+        }),
+        [],
+    );
+    const recorder = useAudioRecorder(recordingOptions);
+    const recorderState = useAudioRecorderState(recorder, 80);
     const scrollRef = useRef<ScrollView>(null);
     const textInputRectRef = useRef<{ y: number; height: number }>({ y: 0, height: 0 });
     const scrollViewportHeightRef = useRef(0);
@@ -69,8 +84,7 @@ export default function App() {
     const scrollTextInputIntoView = useCallback(() => {
         const { y, height } = textInputRectRef.current;
         const measuredViewport = scrollViewportHeightRef.current;
-        const viewportH =
-            measuredViewport > 0 ? measuredViewport : Math.max(280, windowHeight * 0.55);
+        const viewportH = measuredViewport > 0 ? measuredViewport : Math.max(280, windowHeight * 0.55);
         const targetY = y + height / 2 - viewportH / 2;
         const scroll = (): void => {
             scrollRef.current?.scrollTo({
@@ -97,6 +111,19 @@ export default function App() {
             void stopSpeaking();
         };
     }, []);
+
+    useEffect(() => {
+        if (!recorderState.isRecording) {
+            return;
+        }
+        const level = meteringToLevel(recorderState.metering);
+        setWaveformLevels((prev) => {
+            if (prev.length !== WAVEFORM_BAR_COUNT) {
+                return createInitialWaveformLevels();
+            }
+            return [...prev.slice(1), level];
+        });
+    }, [recorderState.isRecording, recorderState.metering]);
 
     const handleAppendResult = useCallback(
         async (entry: HistoryEntry) => {
@@ -156,61 +183,49 @@ export default function App() {
             setErrorMessage(msg);
             return;
         }
-        if (recordingRef.current !== null) {
+        if (recordingStartInFlightRef.current || recorder.getStatus().isRecording) {
             return;
         }
+        recordingStartInFlightRef.current = true;
         try {
-            const perm = await Audio.requestPermissionsAsync();
+            const perm = await requestRecordingPermissionsAsync();
             if (perm.status !== 'granted') {
                 const msg = '마이크 권한이 필요합니다.';
                 logUserFacingError('record', msg);
                 setErrorMessage(msg);
                 return;
             }
-            await Audio.setAudioModeAsync({
-                allowsRecordingIOS: true,
-                playsInSilentModeIOS: true,
+            await setAudioModeAsync({
+                allowsRecording: true,
+                playsInSilentMode: true,
+                shouldPlayInBackground: false,
             });
             setWaveformLevels(createInitialWaveformLevels());
-            const { recording: rec } = await Audio.Recording.createAsync(
-                Audio.RecordingOptionsPresets.HIGH_QUALITY,
-                (status) => {
-                    if (!status.isRecording) {
-                        return;
-                    }
-                    const level = meteringToLevel(status.metering);
-                    setWaveformLevels((prev) => {
-                        if (prev.length !== WAVEFORM_BAR_COUNT) {
-                            return createInitialWaveformLevels();
-                        }
-                        return [...prev.slice(1), level];
-                    });
-                },
-                80,
-            );
-            recordingRef.current = rec;
+            await recorder.prepareToRecordAsync();
+            recorder.record();
             setRecording(true);
         } catch (e) {
             const message = e instanceof Error ? e.message : '녹음을 시작할 수 없습니다.';
             logUserFacingError('record', message, e);
             setErrorMessage(message);
+        } finally {
+            recordingStartInFlightRef.current = false;
         }
-    }, []);
+    }, [recorder]);
 
     const handleStopRecording = useCallback(async () => {
-        const rec = recordingRef.current;
-        if (rec === null) {
+        if (!recording) {
             return;
         }
         setRecording(false);
         setWaveformLevels(createInitialWaveformLevels());
-        recordingRef.current = null;
         setVoiceProcessing(true);
         setErrorMessage(null);
         try {
-            await rec.stopAndUnloadAsync();
-            const uri = rec.getURI();
-            if (uri === null) {
+            await recorder.stop();
+            const statusAfterStop = recorder.getStatus();
+            const uri = recorder.uri ?? statusAfterStop.url;
+            if (uri === null || uri.length === 0) {
                 throw new Error('녹음 파일을 읽을 수 없습니다.');
             }
             const base64 = await FileSystem.readAsStringAsync(uri, {
@@ -231,12 +246,15 @@ export default function App() {
             setErrorMessage(message);
         } finally {
             setVoiceProcessing(false);
-            await Audio.setAudioModeAsync({
-                allowsRecordingIOS: false,
-                playsInSilentModeIOS: true,
+            await setAudioModeAsync({
+                allowsRecording: false,
+                playsInSilentMode: true,
+                shouldRouteThroughEarpiece: false,
+                shouldPlayInBackground: false,
+                interruptionMode: 'mixWithOthers',
             });
         }
-    }, [direction, handleAppendResult]);
+    }, [recording, direction, handleAppendResult, recorder]);
 
     const handlePressRecordToggle = useCallback(() => {
         if (recording) {
@@ -271,21 +289,6 @@ export default function App() {
         setDirection('ko-cn');
     }, []);
 
-    const handleSpeakOriginalPress = useCallback(() => {
-        if (latest === null) {
-            return;
-        }
-        void (async () => {
-            try {
-                await speakOriginal(latest.original, latest.direction);
-            } catch (e) {
-                const message = e instanceof Error ? e.message : '음성 재생에 실패했습니다.';
-                logUserFacingError('tts', message, e);
-                setErrorMessage(message);
-            }
-        })();
-    }, [latest]);
-
     const handleSpeakTranslationPress = useCallback(() => {
         if (latest === null) {
             return;
@@ -305,8 +308,7 @@ export default function App() {
         void stopSpeaking();
     }, []);
 
-    const keyboardVerticalOffset =
-        Platform.OS === 'ios' ? 56 : (RNStatusBar.currentHeight ?? 0);
+    const keyboardVerticalOffset = Platform.OS === 'ios' ? 56 : (RNStatusBar.currentHeight ?? 0);
 
     return (
         <KeyboardAvoidingView
@@ -323,13 +325,8 @@ export default function App() {
                 keyboardDismissMode="interactive"
             >
                 <DuckMascot />
-                <Text style={styles.title}>더기</Text>
-                <Text style={styles.tagline}>덕이~ 더기~ · duck + 이 · 중한 통역</Text>
-                <View style={styles.badgeRow}>
-                    <Text style={styles.badge}>Gemini</Text>
-                    <Text style={styles.badgeHint}>iOS/Android 음성</Text>
-                </View>
-
+                <Text style={styles.title}>번역/翻译</Text>
+                <Text style={styles.subTitle}>我不会中文。我们用翻译来交流吧。</Text>
                 <View style={styles.segment}>
                     <Pressable
                         onPress={handleSelectDirectionCnKo}
@@ -338,11 +335,6 @@ export default function App() {
                         accessibilityLabel="중국어를 한국어로 번역"
                     >
                         <View style={styles.segmentInner}>
-                            <Ionicons
-                                name="arrow-forward-circle-outline"
-                                size={20}
-                                color={direction === 'cn-ko' ? '#b45309' : '#94a3b8'}
-                            />
                             <Text style={[styles.segmentText, direction === 'cn-ko' && styles.segmentTextActive]}>
                                 中 → 한
                             </Text>
@@ -355,18 +347,12 @@ export default function App() {
                         accessibilityLabel="한국어를 중국어로 번역"
                     >
                         <View style={styles.segmentInner}>
-                            <Ionicons
-                                name="arrow-back-circle-outline"
-                                size={20}
-                                color={direction === 'ko-cn' ? '#b45309' : '#94a3b8'}
-                            />
                             <Text style={[styles.segmentText, direction === 'ko-cn' && styles.segmentTextActive]}>
                                 한 → 中
                             </Text>
                         </View>
                     </Pressable>
                 </View>
-
                 {latest !== null && (
                     <View style={styles.resultCard}>
                         <View style={styles.resultCardHeader}>
@@ -376,16 +362,6 @@ export default function App() {
                         <Text style={styles.resultMain}>{latest.translation}</Text>
                         <Text style={styles.resultSub}>원문 · {latest.original}</Text>
                         <View style={styles.resultTtsRow}>
-                            <Pressable
-                                onPress={handleSpeakOriginalPress}
-                                style={({ pressed }) => [styles.ttsIconBtn, styles.ttsIconBtnPrimary, pressed && styles.pressed]}
-                                accessibilityRole="button"
-                                accessibilityLabel={
-                                    latest.direction === 'cn-ko' ? '원문 중국어 듣기' : '원문 한국어 듣기'
-                                }
-                            >
-                                <Ionicons name="volume-medium" size={22} color="#fff" />
-                            </Pressable>
                             <Pressable
                                 onPress={handleSpeakTranslationPress}
                                 style={({ pressed }) => [
@@ -398,21 +374,23 @@ export default function App() {
                                     latest.direction === 'cn-ko' ? '번역 한국어 듣기' : '번역 중국어 듣기'
                                 }
                             >
-                                <Ionicons name="chatbubble-ellipses" size={20} color="#fff" />
+                                <Ionicons name="volume-medium" size={22} color="#fff" />
                             </Pressable>
                             <Pressable
                                 onPress={handleStopSpeakingPress}
-                                style={({ pressed }) => [styles.ttsIconBtn, styles.ttsIconBtnGhost, pressed && styles.pressed]}
+                                style={({ pressed }) => [
+                                    styles.ttsIconBtn,
+                                    styles.ttsIconBtnGhost,
+                                    pressed && styles.pressed,
+                                ]}
                                 accessibilityRole="button"
                                 accessibilityLabel="재생 중지"
                             >
                                 <Ionicons name="stop-circle-outline" size={24} color="#64748b" />
                             </Pressable>
                         </View>
-                        <Text style={styles.ttsHint}>왼쪽 원문 · 가운데 번역 · 오른쪽 정지</Text>
                     </View>
                 )}
-
                 <View style={styles.sectionRow}>
                     <Ionicons name="mic-outline" size={18} color="#f59e0b" />
                     <Text style={styles.sectionTitleInline}>말로 하기</Text>
@@ -439,14 +417,8 @@ export default function App() {
                             />
                         )}
                     </Pressable>
-                    {recording && isAudioSupported() && (
-                        <RecordingWaveform levels={waveformLevels} compact />
-                    )}
+                    {recording && isAudioSupported() && <RecordingWaveform levels={waveformLevels} compact />}
                 </View>
-                {!recording && isAudioSupported() && (
-                    <Text style={styles.voiceHint}>노란 버튼 탭 → 말하고 → 다시 탭</Text>
-                )}
-
                 <View style={styles.sectionRow}>
                     <Ionicons name="create-outline" size={18} color="#0ea5e9" />
                     <Text style={styles.sectionTitleInline}>글로 하기</Text>
@@ -463,24 +435,22 @@ export default function App() {
                             editable={!textProcessing && !voiceProcessing}
                             onFocus={scrollTextInputIntoView}
                         />
-                    <Pressable
-                        onPress={handleTranslateText}
-                        style={[styles.sendFab, textProcessing && styles.sendFabDisabled]}
-                        disabled={textProcessing || voiceProcessing}
-                        accessibilityRole="button"
-                        accessibilityLabel="번역 보내기"
-                    >
-                        {textProcessing ? (
-                            <ActivityIndicator color="#fff" size="small" />
-                        ) : (
-                            <Ionicons name="send" size={22} color="#fff" />
-                        )}
-                    </Pressable>
+                        <Pressable
+                            onPress={handleTranslateText}
+                            style={[styles.sendFab, textProcessing && styles.sendFabDisabled]}
+                            disabled={textProcessing || voiceProcessing}
+                            accessibilityRole="button"
+                            accessibilityLabel="번역 보내기"
+                        >
+                            {textProcessing ? (
+                                <ActivityIndicator color="#fff" size="small" />
+                            ) : (
+                                <Ionicons name="send" size={22} color="#fff" />
+                            )}
+                        </Pressable>
                     </View>
                 </View>
-
                 {errorMessage !== null && <Text style={styles.error}>{errorMessage}</Text>}
-
                 <View style={styles.historyHeader}>
                     <View style={styles.sectionRow}>
                         <Ionicons name="time-outline" size={18} color="#64748b" />
@@ -492,7 +462,6 @@ export default function App() {
                         </Pressable>
                     )}
                 </View>
-
                 {history.length === 0 ? (
                     <Text style={styles.empty}>아직 기록이 없어요 🌱</Text>
                 ) : (
@@ -529,33 +498,11 @@ const styles = StyleSheet.create({
         marginBottom: 6,
         letterSpacing: -0.5,
     },
-    tagline: {
-        fontSize: 14,
+    subTitle: {
+        fontSize: 16,
         color: '#78716c',
         textAlign: 'center',
-        marginBottom: 10,
-        lineHeight: 20,
-    },
-    badgeRow: {
-        flexDirection: 'row',
-        justifyContent: 'center',
-        alignItems: 'center',
-        gap: 8,
-        marginBottom: 18,
-    },
-    badge: {
-        backgroundColor: '#fef3c7',
-        color: '#b45309',
-        fontSize: 11,
-        fontWeight: '700',
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-        borderRadius: 999,
-        overflow: 'hidden',
-    },
-    badgeHint: {
-        fontSize: 12,
-        color: '#a8a29e',
+        marginBottom: 12,
     },
     segment: {
         flexDirection: 'row',
@@ -698,12 +645,6 @@ const styles = StyleSheet.create({
     micFabDisabled: {
         backgroundColor: '#d6d3d1',
         shadowOpacity: 0,
-    },
-    voiceHint: {
-        fontSize: 12,
-        color: '#a8a29e',
-        marginBottom: 18,
-        marginLeft: 2,
     },
     textInputSection: {
         marginBottom: 0,

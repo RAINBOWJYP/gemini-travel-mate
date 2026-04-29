@@ -29,7 +29,7 @@
     },
     "plugins": [
       [
-        "expo-av",
+        "expo-audio",
         {
           "microphonePermission": "번역을 위해 마이크로 음성을 녹음합니다."
         }

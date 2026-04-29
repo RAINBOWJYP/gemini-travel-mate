@@ -2,7 +2,7 @@
 export const WAVEFORM_BAR_COUNT = 32;
 
 /**
- * expo-av RecordingStatus.metering (dBFS, 대략 -160 ~ 0) → 0~1 높이 비율
+ * expo-audio RecorderState.metering (dBFS, 대략 -160 ~ 0) → 0~1 높이 비율
  */
 export const meteringToLevel = (metering: number | undefined): number => {
   if (metering === undefined) {
