@@ -5,6 +5,7 @@ import {
     useAudioRecorder,
     useAudioRecorderState,
 } from 'expo-audio';
+import * as Clipboard from 'expo-clipboard';
 import * as FileSystem from 'expo-file-system/legacy';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -308,6 +309,21 @@ export default function App() {
         void stopSpeaking();
     }, []);
 
+    const handleCopyToClipboard = useCallback(async (text: string) => {
+        const trimmed = text.trim();
+        if (trimmed.length === 0) {
+            return;
+        }
+        try {
+            await Clipboard.setStringAsync(trimmed);
+            Alert.alert('복사 완료', '클립보드에 넣었어요.');
+        } catch (e) {
+            const message = e instanceof Error ? e.message : '복사에 실패했습니다.';
+            logUserFacingError('clipboard', message, e);
+            setErrorMessage(message);
+        }
+    }, []);
+
     const keyboardVerticalOffset = Platform.OS === 'ios' ? 56 : (RNStatusBar.currentHeight ?? 0);
 
     return (
@@ -317,13 +333,18 @@ export default function App() {
             keyboardVerticalOffset={keyboardVerticalOffset}
         >
             <StatusBar style="dark" />
-            <ScrollView
-                ref={scrollRef}
-                onLayout={handleScrollViewLayout}
-                contentContainerStyle={styles.scrollContent}
-                keyboardShouldPersistTaps="handled"
-                keyboardDismissMode="interactive"
-            >
+            <View style={styles.screenBody}>
+                <ScrollView
+                    ref={scrollRef}
+                    style={styles.scrollView}
+                    onLayout={handleScrollViewLayout}
+                    contentContainerStyle={[
+                        styles.scrollContent,
+                        isAudioSupported() && styles.scrollContentWithVoiceFloater,
+                    ]}
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="interactive"
+                >
                 <DuckMascot />
                 <Text style={styles.title}>번역/翻译</Text>
                 <Text style={styles.subTitle}>我不会中文。我们用翻译来交流吧。</Text>
@@ -363,6 +384,20 @@ export default function App() {
                         <Text style={styles.resultSub}>원문 · {latest.original}</Text>
                         <View style={styles.resultTtsRow}>
                             <Pressable
+                                onPress={() => {
+                                    void handleCopyToClipboard(latest.translation);
+                                }}
+                                style={({ pressed }) => [
+                                    styles.ttsIconBtn,
+                                    styles.ttsIconBtnCopy,
+                                    pressed && styles.pressed,
+                                ]}
+                                accessibilityRole="button"
+                                accessibilityLabel="번역 결과 복사"
+                            >
+                                <Ionicons name="copy-outline" size={22} color="#a16207" />
+                            </Pressable>
+                            <Pressable
                                 onPress={handleSpeakTranslationPress}
                                 style={({ pressed }) => [
                                     styles.ttsIconBtn,
@@ -391,34 +426,31 @@ export default function App() {
                         </View>
                     </View>
                 )}
-                <View style={styles.sectionRow}>
-                    <Ionicons name="mic-outline" size={18} color="#f59e0b" />
-                    <Text style={styles.sectionTitleInline}>말로 하기</Text>
-                </View>
-                <View style={styles.voiceRow}>
-                    <Pressable
-                        onPress={handlePressRecordToggle}
-                        style={[
-                            styles.micFab,
-                            recording && styles.micFabActive,
-                            !isAudioSupported() && styles.micFabDisabled,
-                        ]}
-                        disabled={voiceProcessing || textProcessing || !isAudioSupported()}
-                        accessibilityRole="button"
-                        accessibilityLabel={recording ? '녹음 종료' : '녹음 시작'}
-                    >
-                        {voiceProcessing && !recording ? (
-                            <ActivityIndicator color="#fff" />
-                        ) : (
-                            <Ionicons
-                                name={!isAudioSupported() ? 'mic-off-outline' : recording ? 'stop' : 'mic'}
-                                size={30}
-                                color="#fff"
-                            />
-                        )}
-                    </Pressable>
-                    {recording && isAudioSupported() && <RecordingWaveform levels={waveformLevels} compact />}
-                </View>
+                {!isAudioSupported() && (
+                    <View style={styles.voiceRow}>
+                        <Pressable
+                            onPress={handlePressRecordToggle}
+                            style={[
+                                styles.micFab,
+                                recording && styles.micFabActive,
+                                !isAudioSupported() && styles.micFabDisabled,
+                            ]}
+                            disabled={voiceProcessing || textProcessing || !isAudioSupported()}
+                            accessibilityRole="button"
+                            accessibilityLabel={recording ? '녹음 종료' : '녹음 시작'}
+                        >
+                            {voiceProcessing && !recording ? (
+                                <ActivityIndicator color="#fff" />
+                            ) : (
+                                <Ionicons
+                                    name={!isAudioSupported() ? 'mic-off-outline' : recording ? 'stop' : 'mic'}
+                                    size={30}
+                                    color="#fff"
+                                />
+                            )}
+                        </Pressable>
+                    </View>
+                )}
                 <View style={styles.sectionRow}>
                     <Ionicons name="create-outline" size={18} color="#0ea5e9" />
                     <Text style={styles.sectionTitleInline}>글로 하기</Text>
@@ -467,15 +499,48 @@ export default function App() {
                 ) : (
                     history.map((item) => (
                         <View key={item.id} style={styles.historyItem}>
-                            <Text style={styles.historyMeta}>
-                                {directionLabel(item.direction)} · {new Date(item.createdAt).toLocaleString('ko-KR')}
-                            </Text>
+                            <View style={styles.historyItemHeader}>
+                                <Text style={styles.historyMeta}>
+                                    {directionLabel(item.direction)} · {new Date(item.createdAt).toLocaleString('ko-KR')}
+                                </Text>
+                                <Pressable
+                                    onPress={() => {
+                                        void handleCopyToClipboard(item.translation);
+                                    }}
+                                    style={({ pressed }) => [styles.historyCopyBtn, pressed && styles.pressed]}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="이 번역 복사"
+                                >
+                                    <Ionicons name="copy-outline" size={20} color="#a16207" />
+                                </Pressable>
+                            </View>
                             <Text style={styles.historyTranslation}>{item.translation}</Text>
                             <Text style={styles.historyOriginal}>{item.original}</Text>
                         </View>
                     ))
                 )}
-            </ScrollView>
+                </ScrollView>
+                {isAudioSupported() && (
+                    <View pointerEvents="box-none" style={styles.voiceFloatBackdrop}>
+                        <View style={styles.voiceFloatInner}>
+                            {recording && <RecordingWaveform levels={waveformLevels} compact />}
+                            <Pressable
+                                onPress={handlePressRecordToggle}
+                                style={[styles.micFab, recording && styles.micFabActive]}
+                                disabled={voiceProcessing || textProcessing}
+                                accessibilityRole="button"
+                                accessibilityLabel={recording ? '녹음 종료' : '음성으로 번역'}
+                            >
+                                {voiceProcessing && !recording ? (
+                                    <ActivityIndicator color="#fff" />
+                                ) : (
+                                    <Ionicons name={recording ? 'stop' : 'mic'} size={30} color="#fff" />
+                                )}
+                            </Pressable>
+                        </View>
+                    </View>
+                )}
+            </View>
         </KeyboardAvoidingView>
     );
 }
@@ -485,10 +550,20 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: '#fffdf7',
     },
+    screenBody: {
+        flex: 1,
+        position: 'relative',
+    },
+    scrollView: {
+        flex: 1,
+    },
     scrollContent: {
         paddingHorizontal: 20,
         paddingTop: Platform.OS === 'ios' ? 56 : 40,
         paddingBottom: 36,
+    },
+    scrollContentWithVoiceFloater: {
+        paddingBottom: Platform.OS === 'ios' ? 172 : 158,
     },
     title: {
         fontSize: 28,
@@ -599,6 +674,11 @@ const styles = StyleSheet.create({
     ttsIconBtnGhost: {
         backgroundColor: '#f5f5f4',
     },
+    ttsIconBtnCopy: {
+        backgroundColor: '#fef3c7',
+        borderWidth: 1,
+        borderColor: '#fcd34d',
+    },
     pressed: {
         opacity: 0.85,
     },
@@ -624,6 +704,22 @@ const styles = StyleSheet.create({
         alignItems: 'stretch',
         gap: 12,
         marginBottom: 8,
+    },
+    voiceFloatBackdrop: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        paddingBottom: Platform.OS === 'ios' ? 30 : 16,
+    },
+    voiceFloatInner: {
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 10,
+        maxWidth: 400,
+        width: '100%',
     },
     micFab: {
         width: 64,
@@ -709,10 +805,21 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: '#e7e5e4',
     },
+    historyItemHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
+        marginBottom: 6,
+    },
+    historyCopyBtn: {
+        padding: 6,
+        borderRadius: 8,
+    },
     historyMeta: {
         fontSize: 12,
         color: '#94a3b8',
-        marginBottom: 6,
+        flex: 1,
     },
     historyTranslation: {
         fontSize: 16,

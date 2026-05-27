@@ -4,7 +4,7 @@ import { WAVEFORM_BAR_COUNT } from '../utils/audioMetering';
 
 type RecordingWaveformProps = {
   levels: number[];
-  /** 한 줄 레이아웃(마이크 옆)일 때 힌트 생략·높이 축소 */
+  /** 한 줄 레이아웃(마이크 FAB 위 등)일 때 힌트 생략·높이 축소 */
   compact?: boolean;
 };
 
@@ -51,11 +51,12 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   wrapCompact: {
-    flex: 1,
     marginBottom: 0,
     paddingVertical: 8,
     paddingHorizontal: 8,
-    minWidth: 0,
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: 288,
   },
   hint: {
     color: '#94a3b8',

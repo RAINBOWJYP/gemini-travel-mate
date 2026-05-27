@@ -1,39 +1,40 @@
 {
-  "expo": {
-    "name": "더기",
-    "slug": "deogi",
-    "version": "1.0.0",
-    "orientation": "portrait",
-    "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
-    "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#fffdf7"
-    },
-    "ios": {
-      "supportsTablet": true
-    },
-    "android": {
-      "softwareKeyboardLayoutMode": "resize",
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#fffdf7"
-      },
-      "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
-    },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    },
-    "plugins": [
-      [
-        "expo-audio",
-        {
-          "microphonePermission": "번역을 위해 마이크로 음성을 녹음합니다."
-        }
-      ]
-    ]
-  }
+    "expo": {
+        "name": "더기",
+        "slug": "deogi",
+        "version": "1.0.0",
+        "orientation": "portrait",
+        "icon": "./assets/icon.png",
+        "userInterfaceStyle": "light",
+        "newArchEnabled": true,
+        "splash": {
+            "image": "./assets/splash-icon.png",
+            "resizeMode": "contain",
+            "backgroundColor": "#fffdf7"
+        },
+        "ios": {
+            "supportsTablet": true,
+            "bundleIdentifier": "com.deogi.app"
+        },
+        "android": {
+            "softwareKeyboardLayoutMode": "resize",
+            "adaptiveIcon": {
+                "foregroundImage": "./assets/adaptive-icon.png",
+                "backgroundColor": "#fffdf7"
+            },
+            "edgeToEdgeEnabled": true,
+            "predictiveBackGestureEnabled": false
+        },
+        "web": {
+            "favicon": "./assets/favicon.png"
+        },
+        "plugins": [
+            [
+                "expo-audio",
+                {
+                    "microphonePermission": "번역을 위해 마이크로 음성을 녹음합니다."
+                }
+            ]
+        ]
+    }
 }
